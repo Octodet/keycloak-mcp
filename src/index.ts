@@ -62,6 +62,13 @@ const UpdateUserRolesSchema = z.object({
   rolesToRemove: z.array(z.string()).optional(),
 });
 
+const ResetUserPasswordSchema = z.object({
+  realm: z.string(),
+  userId: z.string(),
+  password: z.string(),
+  temporary: z.boolean().default(false),
+});
+
 // List available tools
 server.setRequestHandler(ListToolsRequestSchema, async () => {
   return {
@@ -153,6 +160,20 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             rolesToRemove: { type: "array", items: { type: "string" } },
           },
           required: ["realm", "userId", "clientId"],
+        },
+      },
+      {
+        name: "reset-user-password",
+        description: "Reset or set a new password for a user in a specific realm",
+        inputSchema: {
+          type: "object",
+          properties: {
+            realm: { type: "string" },
+            userId: { type: "string" },
+            password: { type: "string" },
+            temporary: { type: "boolean" },
+          },
+          required: ["realm", "userId", "password"],
         },
       },
     ],
@@ -405,6 +426,33 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
               }).\nAdded: ${added.join(", ") || "none"}\nRemoved: ${
                 removed.join(", ") || "none"
               }${errors.length ? `\nErrors: ${errors.join(", ")}` : ""}`,
+            },
+          ],
+        };
+      }
+
+      case "reset-user-password": {
+        const { realm, userId, password, temporary } = ResetUserPasswordSchema.parse(args);
+
+        kcAdminClient.setConfig({
+          realmName: realm,
+        });
+
+        await kcAdminClient.users.resetPassword({
+          id: userId,
+          realm,
+          credential: {
+            type: "password",
+            value: password,
+            temporary: temporary,
+          },
+        });
+
+        return {
+          content: [
+            {
+              type: "text",
+              text: `Password ${temporary ? "temporarily " : ""}reset successfully for user ${userId} in realm ${realm}${temporary ? ". User will be required to change password on next login." : "."}`,
             },
           ],
         };
