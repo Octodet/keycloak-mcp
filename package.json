@@ -1,0 +1,56 @@
+{
+  "name": "@octodet/keycloak-mcp",
+  "version": "1.0.0",
+  "description": "Model Context Protocol server for Keycloak administration",
+  "license": "MIT",
+  "author": "Octodet",
+  "type": "module",
+  "main": "./build/index.js",
+  "bin": {
+    "keycloak-mcp": "./build/index.js"
+  },
+  "files": [
+    "build"
+  ],
+  "scripts": {
+    "build": "tsc && chmod 755 build/index.js",
+    "prepare": "npm run build",
+    "watch": "tsc --watch"
+  },
+  "keywords": [
+    "keycloak",
+    "mcp",
+    "mcp-server",
+    "llm-tools",
+    "model-context-protocol",
+    "identity",
+    "access-management",
+    "authentication",
+    "authorization",
+    "mcp",
+    "model-context-protocol",
+    "octodet",
+    "admin-client",
+    "iam",
+    "sso",
+    "oauth2",
+    "openid-connect"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/Octodet/keycloak-mcp.git"
+  },
+  "bugs": {
+    "url": "https://github.com/Octodet/keycloak-mcp/issues"
+  },
+  "homepage": "https://github.com/Octodet/keycloak-mcp#readme",
+  "dependencies": {
+    "@keycloak/keycloak-admin-client": "^22.0.5",
+    "@modelcontextprotocol/sdk": "0.5.0",
+    "zod": "^3.22.4"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.31",
+    "typescript": "^5.3.3"
+  }
+}
