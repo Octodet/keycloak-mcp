@@ -15,7 +15,8 @@
   "scripts": {
     "build": "tsc && chmod 755 build/index.js",
     "prepare": "npm run build",
-    "watch": "tsc --watch"
+    "watch": "tsc --watch",
+    "test": "echo \"No tests yet\" && exit 0"
   },
   "keywords": [
     "keycloak",
