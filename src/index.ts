@@ -182,11 +182,11 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 // Handle tool calls
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
-  // Initialize Keycloak client
-  const kcAdminClient = new KcAdminClient({
-    baseUrl: process.env.KEYCLOAK_URL || "http://localhost:8080",
-    realmName: "master",
-  });
+   // Initialize Keycloak client
+const kcAdminClient = new KcAdminClient({
+  baseUrl: process.env.KEYCLOAK_URL || "http://localhost:8080",
+  realmName: process.env.REALM_NAME || "master",
+});
   // Authenticate before each request
   await kcAdminClient.auth({
     username: process.env.KEYCLOAK_ADMIN || "admin",
