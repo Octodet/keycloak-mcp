@@ -1,0 +1,322 @@
+name: Enhanced Release and Publish
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      release_type:
+        description: "Release type"
+        required: true
+        default: "patch"
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+          - prerelease
+
+env:
+  NODE_VERSION: "18"
+
+jobs:
+  check-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      should_release: ${{ steps.check.outputs.should_release }}
+      version: ${{ steps.version.outputs.new_version }}
+      bump_type: ${{ steps.check.outputs.bump_type }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Check if release needed
+        id: check
+        run: |
+          # Get the last tag, or use 0.0.0 if no tags exist
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "v0.0.0")
+          echo "Last tag: $LAST_TAG"
+
+          # Check for conventional commit types since last tag
+          if [ "$LAST_TAG" = "v0.0.0" ] && ! git tag | grep -q "v0.0.0"; then
+            # No tags exist, check all commits
+            COMMITS=$(git log --oneline --grep="^feat\|^fix\|^BREAKING CHANGE")
+          else
+            # Check commits since last tag
+            COMMITS=$(git log --oneline ${LAST_TAG}..HEAD --grep="^feat\|^fix\|^BREAKING CHANGE")
+          fi
+
+          echo "Relevant commits:"
+          echo "$COMMITS"
+
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ] || [ -n "$COMMITS" ]; then
+            echo "should_release=true" >> "$GITHUB_OUTPUT"
+            
+            # Determine version bump type
+            if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+              BUMP_TYPE="${{ github.event.inputs.release_type }}"
+            else
+              # Auto-determine based on commits
+              if echo "$COMMITS" | grep -q "BREAKING CHANGE"; then
+                BUMP_TYPE="major"
+              elif echo "$COMMITS" | grep -q "^feat"; then
+                BUMP_TYPE="minor"
+              else
+                BUMP_TYPE="patch"
+              fi
+            fi
+            
+            echo "bump_type=$BUMP_TYPE" >> "$GITHUB_OUTPUT"
+            echo "Determined bump type: $BUMP_TYPE"
+          else
+            echo "should_release=false" >> "$GITHUB_OUTPUT"
+            echo "No release needed - no relevant commits found"
+          fi
+
+      - name: Calculate new version
+        id: version
+        if: steps.check.outputs.should_release == 'true'
+        run: |
+          # Get current version from package.json
+          CURRENT_VERSION=$(node -p "require('./package.json').version")
+          echo "Current version from package.json: $CURRENT_VERSION"
+
+          # Get the bump type
+          BUMP_TYPE="${{ steps.check.outputs.bump_type }}"
+          echo "Bump type: $BUMP_TYPE"
+
+          # Calculate new version using semver logic
+          IFS='.' read -r -a VERSION_PARTS <<< "$CURRENT_VERSION"
+          MAJOR=${VERSION_PARTS[0]}
+          MINOR=${VERSION_PARTS[1]}
+          PATCH=${VERSION_PARTS[2]%%-*}  # Remove any prerelease suffix
+
+          case $BUMP_TYPE in
+            major)
+              MAJOR=$((MAJOR + 1))
+              MINOR=0
+              PATCH=0
+              ;;
+            minor)
+              MINOR=$((MINOR + 1))
+              PATCH=0
+              ;;
+            patch)
+              PATCH=$((PATCH + 1))
+              ;;
+            prerelease)
+              # Handle prerelease logic
+              if [[ "$CURRENT_VERSION" == *"-rc"* ]]; then
+                # Increment RC number
+                RC_NUM=$(echo "$CURRENT_VERSION" | sed 's/.*-rc\.\([0-9]*\).*/\1/')
+                RC_NUM=$((RC_NUM + 1))
+                NEW_VERSION="$MAJOR.$MINOR.$PATCH-rc.$RC_NUM"
+              else
+                # First prerelease
+                PATCH=$((PATCH + 1))
+                NEW_VERSION="$MAJOR.$MINOR.$PATCH-rc.0"
+              fi
+              ;;
+          esac
+
+          # Set new version if not prerelease
+          if [ "$BUMP_TYPE" != "prerelease" ]; then
+            NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+          fi
+
+          # Check if the calculated version already has a tag
+          while git ls-remote --tags origin | grep -q "refs/tags/v$NEW_VERSION$"; do
+            echo "Warning: Tag v$NEW_VERSION already exists, incrementing patch version"
+            case $BUMP_TYPE in
+              major|minor|patch)
+                PATCH=$((PATCH + 1))
+                NEW_VERSION="$MAJOR.$MINOR.$PATCH"
+                ;;
+              prerelease)
+                if [[ "$NEW_VERSION" == *"-rc"* ]]; then
+                  RC_NUM=$(echo "$NEW_VERSION" | sed 's/.*-rc\.\([0-9]*\).*/\1/')
+                  RC_NUM=$((RC_NUM + 1))
+                  NEW_VERSION="$MAJOR.$MINOR.$PATCH-rc.$RC_NUM"
+                else
+                  NEW_VERSION="$MAJOR.$MINOR.$PATCH-rc.1"
+                fi
+                ;;
+            esac
+          done
+
+          echo "new_version=$NEW_VERSION" >> "$GITHUB_OUTPUT"
+          echo "Calculated new version: $NEW_VERSION"
+
+  test:
+    needs: check-changes
+    if: needs.check-changes.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: npm test
+
+      - name: Build project
+        run: npm run build
+
+      - name: Verify build output
+        run: |
+          if [ ! -f "build/index.js" ]; then
+            echo "Build failed - index.js not found"
+            exit 1
+          fi
+          echo "Build successful"
+
+  release:
+    needs: [check-changes, test]
+    if: needs.check-changes.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: "npm"
+          registry-url: "https://registry.npmjs.org"
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build project
+        run: npm run build
+
+      - name: Update package.json version
+        run: |
+          NEW_VERSION="${{ needs.check-changes.outputs.version }}"
+          echo "Updating package.json to version: $NEW_VERSION"
+
+          # Update package.json with new version
+          npm version $NEW_VERSION --no-git-tag-version
+
+          # Verify the version was updated
+          UPDATED_VERSION=$(node -p "require('./package.json').version")
+          echo "Package.json now shows version: $UPDATED_VERSION"
+
+      - name: Generate changelog
+        id: changelog
+        run: |
+          NEW_VERSION="${{ needs.check-changes.outputs.version }}"
+          BUMP_TYPE="${{ needs.check-changes.outputs.bump_type }}"
+
+          echo "## Release v$NEW_VERSION ($BUMP_TYPE)" > CHANGELOG_TEMP.md
+          echo "" >> CHANGELOG_TEMP.md
+
+          # Get commits since last tag
+          LAST_TAG=$(git describe --tags --abbrev=0 2>/dev/null || echo "")
+          if [ -n "$LAST_TAG" ]; then
+            echo "### Changes since $LAST_TAG:" >> CHANGELOG_TEMP.md
+            git log --oneline $LAST_TAG..HEAD --pretty=format:"- %s (%h)" >> CHANGELOG_TEMP.md
+            COMPARE_URL="https://github.com/${{ github.repository }}/compare/$LAST_TAG...v$NEW_VERSION"
+          else
+            echo "### Initial release changes:" >> CHANGELOG_TEMP.md
+            git log --oneline --pretty=format:"- %s (%h)" >> CHANGELOG_TEMP.md
+            COMPARE_URL="https://github.com/${{ github.repository }}/commits/v$NEW_VERSION"
+          fi
+
+          echo "" >> CHANGELOG_TEMP.md
+          echo "**Full Changelog**: $COMPARE_URL" >> CHANGELOG_TEMP.md
+
+      - name: Create and push tag
+        run: |
+          NEW_VERSION="${{ needs.check-changes.outputs.version }}"
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+
+          # Check if tag already exists
+          if git tag -l "v$NEW_VERSION" | grep -q "v$NEW_VERSION"; then
+            echo "Tag v$NEW_VERSION already exists locally, deleting it first"
+            git tag -d "v$NEW_VERSION"
+          fi
+
+          # Check if tag exists on remote
+          if git ls-remote --tags origin | grep -q "refs/tags/v$NEW_VERSION$"; then
+            echo "Tag v$NEW_VERSION already exists on remote, deleting it first"
+            git push --delete origin "v$NEW_VERSION" || echo "Failed to delete remote tag, continuing..."
+          fi
+
+          # Create annotated tag
+          git tag -a "v$NEW_VERSION" -m "Release v$NEW_VERSION"
+          git push origin "v$NEW_VERSION"
+
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ needs.check-changes.outputs.version }}
+          release_name: Release v${{ needs.check-changes.outputs.version }}
+          body_path: CHANGELOG_TEMP.md
+          draft: false
+          prerelease: ${{ contains(needs.check-changes.outputs.version, '-') }}
+
+      - name: Publish to npm
+        run: npm publish --access public --provenance
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
+      - name: Clean up
+        run: rm -f CHANGELOG_TEMP.md
+
+  verify-publish:
+    needs: [check-changes, release]
+    if: needs.check-changes.outputs.should_release == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Wait for npm propagation
+        run: sleep 30
+
+      - name: Verify package is available
+        run: |
+          VERSION="${{ needs.check-changes.outputs.version }}"
+
+          echo "Checking if @octodet/elasticsearch-mcp@$VERSION is available..."
+          npm view @octodet/elasticsearch-mcp@$VERSION --json
+
+          if [ $? -eq 0 ]; then
+            echo "✅ Package successfully published and available on npm"
+          else
+            echo "❌ Package not found on npm"
+            exit 1
+          fi
+
+      - name: Test installation
+        run: |
+          VERSION="${{ needs.check-changes.outputs.version }}"
+
+          echo "Testing global installation..."
+          npm install -g @octodet/elasticsearch-mcp@$VERSION
+
+          echo "Testing direct execution..."
+          npx @octodet/elasticsearch-mcp@$VERSION --version || true
