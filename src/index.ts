@@ -18,7 +18,6 @@ export const VERSION = pkg.version;
 // Types
 interface KeycloakConfig {
   baseUrl: string;
-  realmName: string;
   adminUsername: string;
   adminPassword: string;
 }
@@ -29,13 +28,19 @@ const ConfigSchema = z.object({
     .string()
     .trim()
     .min(1, "Keycloak URL cannot be empty")
+    .refine(
+      (url) => {
+        try {
+          new URL(url);
+          return true;
+        } catch {
+          return url.startsWith('http://') || url.startsWith('https://');
+        }
+      },
+      "Keycloak URL must be a valid URL starting with http:// or https://"
+    )
+    .transform((url) => url.replace(/\/+$/, "")) // Remove trailing slashes
     .describe("Keycloak server URL"),
-  
-  realmName: z
-    .string()
-    .trim()
-    .min(1, "Realm name cannot be empty")
-    .describe("Default Keycloak realm name"),
   
   adminUsername: z
     .string()
@@ -54,24 +59,42 @@ const ConfigSchema = z.object({
 class KeycloakService {
   private config: KeycloakConfig;
   private client: KcAdminClient;
+  private isAuthenticated: boolean = false;
+  private authTokenExpiry: number = 0;
 
   constructor(config: KeycloakConfig) {
     this.config = ConfigSchema.parse(config);
     this.client = new KcAdminClient({
       baseUrl: this.config.baseUrl,
-      realmName: this.config.realmName,
+      realmName: "master",
     });
   }
 
   private async authenticate(): Promise<void> {
+    // Check if we have a valid token
+    const now = Date.now();
+    if (this.isAuthenticated && now < this.authTokenExpiry) {
+      return;
+    }
+
     try {
-      await this.client.auth({
+      // Set the realm for authentication (usually master for admin operations)
+      this.client.setConfig({ realmName: "master" });
+      
+      const authResult = await this.client.auth({
         username: this.config.adminUsername,
         password: this.config.adminPassword,
         grantType: "password",
         clientId: "admin-cli",
       });
+      
+      this.isAuthenticated = true;
+      // Set token expiry to 5 minutes from now (tokens typically last longer, but this is safe)
+      this.authTokenExpiry = now + (5 * 60 * 1000);
+      
     } catch (error) {
+      this.isAuthenticated = false;
+      this.authTokenExpiry = 0;
       throw new McpError(
         ErrorCode.InternalError,
         `Failed to authenticate with Keycloak: ${error instanceof Error ? error.message : String(error)}`
@@ -279,7 +302,15 @@ class KeycloakService {
 
 // Function to create and configure the MCP server
 export async function createKeycloakMcpServer(config: KeycloakConfig): Promise<Server> {
-  const validatedConfig = ConfigSchema.parse(config);
+  let validatedConfig;
+  try {
+    validatedConfig = ConfigSchema.parse(config);
+  } catch (error) {
+    throw new McpError(
+      ErrorCode.InvalidRequest,
+      `Invalid configuration: ${error instanceof Error ? error.message : String(error)}`
+    );
+  }
 
   // Create Keycloak service instance
   const keycloakService = new KeycloakService(validatedConfig);
@@ -583,12 +614,6 @@ export async function createKeycloakMcpServer(config: KeycloakConfig): Promise<S
         };
       }
       
-      console.error(
-        `Tool execution failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`
-      );
-      
       return {
         content: [
           {
@@ -608,7 +633,6 @@ export async function createKeycloakMcpServer(config: KeycloakConfig): Promise<S
 // Get Keycloak configuration from environment variables
 const config: KeycloakConfig = {
   baseUrl: process.env.KEYCLOAK_URL || "http://localhost:8080",
-  realmName: process.env.REALM_NAME || "master",
   adminUsername: process.env.KEYCLOAK_ADMIN || "admin",
   adminPassword: process.env.KEYCLOAK_ADMIN_PASSWORD || "admin",
 };
