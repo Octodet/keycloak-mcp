@@ -301,8 +301,8 @@ jobs:
         run: |
           VERSION="${{ needs.check-changes.outputs.version }}"
 
-          echo "Checking if @octodet/elasticsearch-mcp@$VERSION is available..."
-          npm view @octodet/elasticsearch-mcp@$VERSION --json
+          echo "Checking if @octodet/keycloak-mcp@$VERSION is available..."
+          npm view @octodet/keycloak-mcp@$VERSION --json
 
           if [ $? -eq 0 ]; then
             echo "✅ Package successfully published and available on npm"
@@ -316,7 +316,7 @@ jobs:
           VERSION="${{ needs.check-changes.outputs.version }}"
 
           echo "Testing global installation..."
-          npm install -g @octodet/elasticsearch-mcp@$VERSION
+          npm install -g @octodet/keycloak-mcp@$VERSION
 
           echo "Testing direct execution..."
-          npx @octodet/elasticsearch-mcp@$VERSION --version || true
+          npx @octodet/keycloak-mcp@$VERSION --version || true
