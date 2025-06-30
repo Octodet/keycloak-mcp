@@ -5,6 +5,10 @@
 
 A powerful Model Context Protocol server for Keycloak administration, providing a comprehensive set of tools to manage users, realms, roles, and other Keycloak resources through LLM interfaces.
 
+<a href="https://glama.ai/mcp/servers/@Octodet/keycloak-mcp">
+  <img width="380" height="200" src="https://glama.ai/mcp/servers/@Octodet/keycloak-mcp/badge" alt="Advanced Keycloak server MCP server" />
+</a>
+
 ## Features
 
 - **User Management**: Create, delete, and list users across realms
